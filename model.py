@@ -37,15 +37,23 @@ class BasicBlock(nn.Module):
     def forward(self, x):
         identity = x
 
+        print('x', x.shape)
+
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
+        print('out1', out.shape)
 
         out = self.conv2(out)
         out = self.bn2(out)
+        print('out2', out.shape)
 
         if self.downsample is not None:
+            # print(x.shape)
+            # print(out.shape)
             identity = self.downsample(x)
+            out = self.downsample(out)
+            
 
         out += identity
         out = self.relu(out)
@@ -128,13 +136,16 @@ class ResNet(nn.Module):
         self.bn1 = norm_layer(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64, layers[0])
+        self.layer1 = self._make_layer(block, 64, layers[0], downsample_type='diffstride')
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2,
-                                       dilate=replace_stride_with_dilation[0])
+                                       dilate=replace_stride_with_dilation[0],
+                                       downsample_type='diffstride')
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2,
-                                       dilate=replace_stride_with_dilation[1])
+                                       dilate=replace_stride_with_dilation[1], 
+                                       downsample_type='diffstride')
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2,
-                                       dilate=replace_stride_with_dilation[2])
+                                       dilate=replace_stride_with_dilation[2],
+                                       downsample_type='diffstride')
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
 
@@ -156,7 +167,7 @@ class ResNet(nn.Module):
                     nn.init.constant_(m.bn2.weight, 0)
 
     #def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
-    def _make_layer(self, block, planes, blocks, stride=1, dilate=False, downsample_type="default"):
+    def _make_layer(self, block, planes, blocks, stride=1, dilate=False, downsample_type="default", **downsample_kwargs):
         norm_layer = self._norm_layer
         downsample = None
         previous_dilation = self.dilation
@@ -169,8 +180,10 @@ class ResNet(nn.Module):
                     conv1x1(self.inplanes, planes * block.expansion, stride),
                     norm_layer(planes * block.expansion),
                 )
-            else:
-                downsample = DiffStride() # To Do
+            elif downsample_type == 'diffstride':
+                downsample = DiffStride(**downsample_kwargs) 
+            else: 
+                raise RuntimeError 
 
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample, self.groups,

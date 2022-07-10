@@ -1,6 +1,8 @@
 from typing import Optional, List, Union
+
 import torch
 import torch.nn as nn
+
 
 def compute_adaptive_span_mask(threshold: torch.float,
                                ramp_softness: torch.float,
@@ -23,8 +25,8 @@ class DiffStride(nn.Module):
         self.smoothness_factor = smoothness_factor
         self.lower_limit_stride = lower_limit_stride
         self.upper_limit_stride = upper_limit_stride
-        self.strides = torch.tensor(strides, requires_grad=True)
-
+        # self.strides = torch.tensor(strides, requires_grad=True)
+        self.strides = nn.Parameter(torch.tensor(strides))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         batch_size, channels, height, width = x.shape[0], x.shape[1], x.shape[2], x.shape[3]
@@ -38,16 +40,16 @@ class DiffStride(nn.Module):
         # even when the stride becomes too small, i.e. close to 1.
         min_vertical_stride = height / (height - self.smoothness_factor)
         min_horizontal_stride = width / (width - self.smoothness_factor)
-        
-        vertical_stride = torch.max(
-            torch.tensor([self.strides[0], torch.tensor(min_vertical_stride)])) # what happens if min_vertical_stride?
-        horizontal_stride = torch.max(
-            torch.tensor([self.strides[1], torch.tensor(min_horizontal_stride)]))
+
+        # vertical_stride = torch.where(self.strides[0] > min_vertical_stride, self.strides[0], min_vertical_stride)
+        # horizontal_stride = torch.where(self.strides[1] > min_horizontal_stride, self.strides[1], min_horizontal_stride)
+        vertical_stride = max(self.strides[0], min_vertical_stride)
+        horizontal_stride = max(self.strides[1], min_horizontal_stride)
 
         strided_height = height / vertical_stride
         strided_width = width / horizontal_stride
-        strided_height = torch.max(torch.tensor([strided_height, 2.0]))
-        strided_width = torch.max(torch.tensor([strided_width, 2.0]))
+        strided_height = max(strided_height, 2.0)
+        strided_width = max(strided_width, 2.0)
         lower_height = strided_height / 2.0
         upper_width = strided_width / 2.0 + 1.0
 
@@ -61,10 +63,15 @@ class DiffStride(nn.Module):
         output = f_x * horizontal_mask[None, None, None, :]
         output = output * vertical_mask[None, None, :, None]
         if self.cropping:
+            # with torch.no_grad():
+            #     horizontal_to_keep = torch.where(horizontal_mask.type(torch.float) > 0.)[0]
+            #     vertical_to_keep = torch.where(vertical_mask.type(torch.float) > 0.)[0]
+            # horizontal_to_keep = torch.where(horizontal_mask.type(torch.float).detach() > 0.)[0]
+            # vertical_to_keep = torch.where(vertical_mask.type(torch.float).detach() > 0.)[0]
             horizontal_to_keep = torch.where(horizontal_mask.type(torch.float) > 0.)[0]
             vertical_to_keep = torch.where(vertical_mask.type(torch.float) > 0.)[0]
-        output = output[:, :, vertical_to_keep, :]
-        output = output[:, :, :, horizontal_to_keep]
+            output = output[:, :, vertical_to_keep, :]
+            output = output[:, :, :, horizontal_to_keep]
         result = torch.fft.irfft2(output) #result = torch.fft.ifft2(output)
 
         return result
@@ -86,9 +93,18 @@ if __name__ == "__main__":
 
     pooling = DiffStride()
     x = pooling(img)
-    print(img.shape, x.shape)
+    loss = x.sum() 
+    loss.backward()
 
-    fig, axis = plt.subplots(1,2)
-    axis[0].imshow(img.squeeze().permute(1,2,0))
-    axis[1].imshow(x.squeeze().permute(1,2,0))
-    plt.show()
+    print(pooling.strides.grad)
+
+    # print(img.shape, x.shape)
+    # print(img.min(), img.max())
+    # print(x.min(), x.max())
+    # x = (x - x.min()) / (x.max() - x.min()) 
+
+
+    # fig, axis = plt.subplots(1,2)
+    # axis[0].imshow(img.squeeze().permute(1,2,0))
+    # axis[1].imshow(x.squeeze().permute(1,2,0))
+    # plt.savefig('temp.png')
